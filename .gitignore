@@ -1,0 +1,16 @@
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+config.py
+state.json
+output/
+*.log
+.pytest_cache/
+.idea/
+.vscode/
+.playwright-browsers/
+procurement_feishu/
+_prd_extract.txt

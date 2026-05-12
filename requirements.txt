@@ -1,0 +1,17 @@
+# 飞书 API 与 HTTP
+requests>=2.31.0
+urllib3>=2.0.0
+python-dotenv>=1.0.0
+
+# 合同生成（docxtpl 基于 python-docx + Jinja2）
+python-docx>=1.1.0
+docxtpl>=0.16.7
+
+# docx → pdf 转换（Windows 通过 pywin32 直接驱动 Microsoft Word COM）
+pywin32>=306; sys_platform == "win32"
+
+# Webhook 服务（飞书事件订阅回调）
+flask>=3.0.0
+
+# 阿里云 FC / 生产容器内启动 Webhook（可选；本地可直接 python webhook_app.py）
+gunicorn>=22.0.0
