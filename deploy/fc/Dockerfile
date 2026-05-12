@@ -27,6 +27,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # 应用代码、模板、静态资源（构建上下文为项目根目录）
 COPY . .
+RUN if [ ! -f config.py ]; then cp config.example.py config.py; fi
 
 EXPOSE 9000
 

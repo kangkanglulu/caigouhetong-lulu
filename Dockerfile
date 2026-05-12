@@ -37,6 +37,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # 应用代码、模板、静态资源（构建上下文为项目根目录）
 COPY . .
+# 仓库中 config.py 被 .gitignore 排除，镜像内不存在会导致 import config 失败、进程秒退。
+# 云上密钥一律用 FC 环境变量注入；此处用示例文件占位，运行时读 os.environ。
+RUN if [ ! -f config.py ]; then cp config.example.py config.py; fi
 
 EXPOSE 9000
 
