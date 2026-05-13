@@ -37,6 +37,9 @@ CMD exec gunicorn \
     --workers 1 \
     --threads 4 \
     --timeout 300 \
+    --graceful-timeout 300 \
+    --keep-alive 75 \
+    --log-level info \
     --access-logfile - \
     --error-logfile - \
     webhook_app:app

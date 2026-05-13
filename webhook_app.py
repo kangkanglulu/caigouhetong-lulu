@@ -104,6 +104,8 @@ def _extract_records_from_event(
 @app.route("/webhook/feishu", methods=["POST"])
 @app.route("/feishu/events", methods=["POST"])
 def feishu_webhook():
+    import json as _json
+
     body = request.get_json(force=True, silent=True) or {}
 
     # URL 验证 / challenge（开发指引常见字段名）
@@ -111,6 +113,17 @@ def feishu_webhook():
     if ch is not None:
         logger.info("响应飞书 URL 校验 challenge")
         return jsonify({"challenge": ch})
+
+    # 调试用：把飞书发来的事件结构完整打到日志里，便于排查
+    # （生产稳定后可删除此日志）
+    try:
+        logger.info(
+            "DEBUG raw body keys=%s body=%s",
+            list(body.keys()),
+            _json.dumps(body, ensure_ascii=False)[:4000],
+        )
+    except Exception:
+        logger.info("DEBUG raw body keys=%s (json dump 失败)", list(body.keys()))
 
     header = body.get("header") or {}
     event_type = header.get("event_type") or body.get("type") or ""

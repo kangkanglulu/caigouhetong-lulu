@@ -44,11 +44,17 @@ RUN if [ ! -f config.py ]; then cp config.example.py config.py; fi
 EXPOSE 9000
 
 # 单 worker：降低 LibreOffice 与飞书写接口并发冲突概率
+# - timeout 300s：覆盖 LibreOffice 冷启动 + PDF 转换 + IM 上传 + Bitable 写回的最长链路
+# - graceful-timeout 300s：worker 被回收时也给足时间，避免半截事务
+# - log-level info：让 [INFO] DEBUG raw body ... 这些日志可以稳定出现在 FC 函数日志
 CMD exec gunicorn \
     --bind "0.0.0.0:${LISTEN_PORT}" \
     --workers 1 \
     --threads 4 \
     --timeout 300 \
+    --graceful-timeout 300 \
+    --keep-alive 75 \
+    --log-level info \
     --access-logfile - \
     --error-logfile - \
     webhook_app:app
