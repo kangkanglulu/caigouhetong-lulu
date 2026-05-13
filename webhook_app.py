@@ -115,6 +115,29 @@ def feishu_webhook():
         logger.info("响应飞书 URL 校验 challenge")
         return jsonify({"challenge": ch})
 
+    # 识别 FC 定时触发器：
+    #   - FC 平台在调用 Web Function 时会带 header X-FC-Source-Trigger-Type: timer
+    #   - 兜底：触发消息里写 {"_trigger":"poll"} 也算
+    # 两者满足其一就跑一次全表轮询，复用 main.run_poll_loop(once=True)
+    trigger_type = (request.headers.get("X-FC-Source-Trigger-Type") or "").lower()
+    is_timer_trigger = (
+        trigger_type == "timer"
+        or (isinstance(body, dict) and body.get("_trigger") == "poll")
+    )
+    if is_timer_trigger:
+        logger.info(
+            "[/] 检测到定时触发器调用 (X-FC-Source-Trigger-Type=%s)，开始一次轮询扫描",
+            trigger_type or "<empty>",
+        )
+        try:
+            cfg = load_config_module()
+            run_poll_loop(cfg, once=True)
+            logger.info("[/] 轮询扫描完成")
+            return jsonify({"code": 0, "msg": "ok"})
+        except Exception as e:
+            logger.exception("[/] 轮询失败: %s", e)
+            return jsonify({"code": 1, "msg": str(e)}), 500
+
     # 调试用：把飞书发来的事件结构完整打到日志里，便于排查
     # （生产稳定后可删除此日志）
     try:
