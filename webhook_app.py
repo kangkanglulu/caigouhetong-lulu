@@ -37,6 +37,32 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 
+def _run_poll_scan_once(log_prefix: str):
+    """执行一次全表轮询；供 /poll、/invoke（FC 定时器）复用。"""
+    cfg = load_config_module()
+    if not (cfg.APP_ID and cfg.APP_SECRET):
+        return jsonify({"code": 1, "msg": "missing APP_ID/APP_SECRET"}), 500
+    if not (cfg.BITABLE_APP_TOKEN and cfg.BITABLE_TABLE_ID):
+        return jsonify({"code": 1, "msg": "missing BITABLE_APP_TOKEN/BITABLE_TABLE_ID"}), 500
+    try:
+        logger.info("%s 开始一次轮询扫描", log_prefix)
+        run_poll_loop(cfg, once=True)
+        logger.info("%s 轮询扫描完成", log_prefix)
+        return jsonify({"code": 0, "msg": "ok"})
+    except Exception as e:
+        logger.exception("%s 轮询失败: %s", log_prefix, e)
+        return jsonify({"code": 1, "msg": str(e)}), 500
+
+
+@app.route("/invoke", methods=["POST", "GET"])
+def fc_platform_invoke():
+    """
+    阿里云 FC「定时触发器（异步）」对 Web 函数实际会 POST /invoke（见访问日志），
+    不会走 POST /。此前未注册此路由会 404，轮询永远不会执行。
+    """
+    return _run_poll_scan_once("[/invoke]")
+
+
 def _extract_records_from_event(
     body: dict[str, Any],
 ) -> tuple[str | None, str | None, list[str]]:
@@ -115,28 +141,18 @@ def feishu_webhook():
         logger.info("响应飞书 URL 校验 challenge")
         return jsonify({"challenge": ch})
 
-    # 识别 FC 定时触发器：
-    #   - FC 平台在调用 Web Function 时会带 header X-FC-Source-Trigger-Type: timer
-    #   - 兜底：触发消息里写 {"_trigger":"poll"} 也算
-    # 两者满足其一就跑一次全表轮询，复用 main.run_poll_loop(once=True)
+    # 识别 FC 定时触发器（若平台改为 POST / 且带 header 时仍可用；多数场景是 POST /invoke，见 fc_platform_invoke）：
+    #   - 部分环境会带 X-FC-Source-Trigger-Type: timer
+    #   - 兜底：触发消息里写 {"_trigger":"poll"}
     trigger_type = (request.headers.get("X-FC-Source-Trigger-Type") or "").lower()
     is_timer_trigger = (
         trigger_type == "timer"
         or (isinstance(body, dict) and body.get("_trigger") == "poll")
     )
     if is_timer_trigger:
-        logger.info(
-            "[/] 检测到定时触发器调用 (X-FC-Source-Trigger-Type=%s)，开始一次轮询扫描",
-            trigger_type or "<empty>",
+        return _run_poll_scan_once(
+            "[/] 定时触发 (X-FC-Source-Trigger-Type=%s)" % (trigger_type or "<empty>",)
         )
-        try:
-            cfg = load_config_module()
-            run_poll_loop(cfg, once=True)
-            logger.info("[/] 轮询扫描完成")
-            return jsonify({"code": 0, "msg": "ok"})
-        except Exception as e:
-            logger.exception("[/] 轮询失败: %s", e)
-            return jsonify({"code": 1, "msg": str(e)}), 500
 
     # 调试用：把飞书发来的事件结构完整打到日志里，便于排查
     # （生产稳定后可删除此日志）
@@ -245,19 +261,7 @@ def poll_route():
 
     无需事件订阅；只要 FC 定时器调一次此路径即可。
     """
-    cfg = load_config_module()
-    if not (cfg.APP_ID and cfg.APP_SECRET):
-        return jsonify({"code": 1, "msg": "missing APP_ID/APP_SECRET"}), 500
-    if not (cfg.BITABLE_APP_TOKEN and cfg.BITABLE_TABLE_ID):
-        return jsonify({"code": 1, "msg": "missing BITABLE_APP_TOKEN/BITABLE_TABLE_ID"}), 500
-    try:
-        logger.info("[/poll] 开始一次轮询扫描")
-        run_poll_loop(cfg, once=True)
-        logger.info("[/poll] 轮询扫描完成")
-        return jsonify({"code": 0, "msg": "ok"})
-    except Exception as e:
-        logger.exception("[/poll] 轮询失败: %s", e)
-        return jsonify({"code": 1, "msg": str(e)}), 500
+    return _run_poll_scan_once("[/poll]")
 
 
 def main():
