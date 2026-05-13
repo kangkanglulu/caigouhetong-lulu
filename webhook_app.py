@@ -27,6 +27,7 @@ from feishu_client import FeishuClient, feishu_field_to_plain, load_config_modul
 from main import (
     _group_records_by_order,
     _setup_logging,
+    _should_process_record,
     process_one_order,
 )
 
@@ -35,25 +36,68 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 
-def _extract_record_from_event(body: dict[str, Any]) -> tuple[str | None, str | None, str | None]:
+def _extract_records_from_event(
+    body: dict[str, Any],
+) -> tuple[str | None, str | None, list[str]]:
     """
-    从不同版本的事件负载中解析 app_token、table_id、record_id。
-    若解析失败返回 (None, None, None)。
+    从不同版本的事件负载中解析 app_token、table_id、record_id 列表。
+
+    支持事件：
+      - bitable.record.created（老版本，event.record_id）
+      - drive.file.bitable_record_changed_v1（v2.0，event.action_list[].record_id）
+      - drive.file.bitable_record_changed_v1 中字段为 record_id_list 的变种
+      - 极少数扁平结构兼容
+
+    只关心「新增/修改」动作（record_added / record_edited），删除动作忽略。
     """
     ev = body.get("event")
-    if isinstance(ev, dict):
-        rid = ev.get("record_id")
-        at = ev.get("app_token")
-        tid = ev.get("table_id")
+    if not isinstance(ev, dict):
+        # 扁平兼容
+        rid = body.get("record_id")
         if rid:
-            return at, tid, rid
+            return body.get("app_token"), body.get("table_id"), [rid]
+        return None, None, []
 
-    # 少数兼容路径：扁平结构
-    rid = body.get("record_id")
-    if rid:
-        return body.get("app_token"), body.get("table_id"), rid
+    app_token = ev.get("app_token") or ev.get("file_token")
+    table_id = ev.get("table_id")
 
-    return None, None, None
+    record_ids: list[str] = []
+
+    # 老版本：单条 record_id
+    rid_single = ev.get("record_id")
+    if rid_single:
+        record_ids.append(rid_single)
+
+    # v2.0：action_list
+    action_list = ev.get("action_list")
+    if isinstance(action_list, list):
+        for act in action_list:
+            if not isinstance(act, dict):
+                continue
+            action_name = (act.get("action") or "").lower()
+            # 忽略删除动作；新增/修改/未知都尝试处理
+            if "delet" in action_name:
+                continue
+            rid = act.get("record_id")
+            if rid:
+                record_ids.append(rid)
+
+    # 另一种变种：record_id_list
+    rid_list = ev.get("record_id_list")
+    if isinstance(rid_list, list):
+        for rid in rid_list:
+            if isinstance(rid, str) and rid:
+                record_ids.append(rid)
+
+    # 去重保序
+    seen: set[str] = set()
+    uniq_ids: list[str] = []
+    for rid in record_ids:
+        if rid not in seen:
+            seen.add(rid)
+            uniq_ids.append(rid)
+
+    return app_token, table_id, uniq_ids
 
 
 @app.route("/", methods=["POST"])
@@ -68,11 +112,10 @@ def feishu_webhook():
         logger.info("响应飞书 URL 校验 challenge")
         return jsonify({"challenge": ch})
 
-    # 事件 2.0：可能是加密载荷；未配置解密时仅记录日志
     header = body.get("header") or {}
     event_type = header.get("event_type") or body.get("type") or ""
 
-    app_token, table_id, record_id = _extract_record_from_event(body)
+    app_token, table_id, record_ids = _extract_records_from_event(body)
 
     cfg = load_config_module()
     if app_token and cfg.BITABLE_APP_TOKEN and app_token != cfg.BITABLE_APP_TOKEN:
@@ -82,39 +125,72 @@ def feishu_webhook():
         logger.warning("事件 table_id 与配置不一致，忽略: %s", table_id)
         return jsonify({"code": 0})
 
-    if record_id and (
+    # 识别支持的事件类型：
+    #   - 老版本 bitable.record.created
+    #   - v2.0 drive.file.bitable_record_changed_v1
+    #   - 兜底：event_type 为空但能解析出 record_id 时也处理
+    is_supported_event = (
         "bitable.record.created" in event_type
+        or "bitable_record_changed" in event_type
         or "record.created" in event_type
         or event_type == ""
-    ):
-        logger.info("收到记录事件 record_id=%s type=%s", record_id, event_type)
-        client = FeishuClient(cfg.APP_ID, cfg.APP_SECRET)
-        try:
-            # 1) 取出本条记录所属的采购订单号
-            rec = client.bitable_get_record(
-                cfg.BITABLE_APP_TOKEN, cfg.BITABLE_TABLE_ID, record_id
-            )
+    )
+
+    if not record_ids or not is_supported_event:
+        logger.info(
+            "收到事件但未触发处理 event_type=%s record_ids=%s", event_type, record_ids
+        )
+        return jsonify({"code": 0})
+
+    logger.info(
+        "收到记录事件 event_type=%s record_ids=%s", event_type, record_ids
+    )
+
+    client = FeishuClient(cfg.APP_ID, cfg.APP_SECRET)
+    try:
+        # 先把整张表拉一次（同一订单号可能有多行），后面按订单号分组
+        all_records = client.bitable_iter_records(
+            cfg.BITABLE_APP_TOKEN,
+            cfg.BITABLE_TABLE_ID,
+            view_id=getattr(cfg, "VIEW_ID", None),
+        )
+        groups = _group_records_by_order(all_records, cfg)
+
+        # 由 record_ids 反查涉及到的所有订单号，去重处理
+        processed_orders: set[str] = set()
+        for rid in record_ids:
+            try:
+                rec = client.bitable_get_record(
+                    cfg.BITABLE_APP_TOKEN, cfg.BITABLE_TABLE_ID, rid
+                )
+            except Exception as e:
+                logger.warning("读取记录 %s 失败: %s", rid, e)
+                continue
             fields = rec.get("fields") or {}
             order_no_raw = feishu_field_to_plain(fields.get(cfg.FIELD_ORDER_NO))
             order_no = str(order_no_raw or "").strip()
             if not order_no:
-                logger.warning("事件记录 %s 未填采购订单号，忽略", record_id)
-                return jsonify({"code": 0})
+                logger.warning("记录 %s 未填采购订单号，忽略", rid)
+                continue
+            if order_no in processed_orders:
+                continue
+            processed_orders.add(order_no)
 
-            # 2) 拉取该订单号下的全部行（含已生成的行，便于完整合并明细）
-            all_records = client.bitable_iter_records(
-                cfg.BITABLE_APP_TOKEN,
-                cfg.BITABLE_TABLE_ID,
-                view_id=getattr(cfg, "VIEW_ID", None),
-            )
-            groups = _group_records_by_order(all_records, cfg)
             same_order = groups.get(order_no) or [rec]
 
-            # 3) 合并生成
+            # 幂等防御：如果该订单号下没有任何一行处于「待生成/空」状态，
+            # 说明上次已经处理完，这次事件多半是我们自己写状态触发的，跳过。
+            if not any(_should_process_record(r, cfg) for r in same_order):
+                logger.info(
+                    "订单号 %s 已全部为「已生成」，跳过（避免回写自触发）",
+                    order_no,
+                )
+                continue
+
             process_one_order(client, cfg, order_no, same_order)
-        except Exception as e:
-            logger.exception("处理事件失败: %s", e)
-            return jsonify({"code": 1, "msg": str(e)}), 500
+    except Exception as e:
+        logger.exception("处理事件失败: %s", e)
+        return jsonify({"code": 1, "msg": str(e)}), 500
 
     return jsonify({"code": 0})
 
