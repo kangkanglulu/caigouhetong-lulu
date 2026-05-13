@@ -1,7 +1,8 @@
 # 阿里云函数计算：自定义镜像（Python + Flask Webhook + LibreOffice PDF）
 # 构建上下文必须是仓库根目录： docker build -f deploy/fc/Dockerfile -t your-tag .
 
-FROM python:3.12-slim-bookworm
+# 使用 daocloud 提供的 Docker Hub 公共镜像加速（避免 ACR 构建机被 docker.io 限流 429）
+FROM docker.m.daocloud.io/library/python:3.12-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
