@@ -29,6 +29,7 @@ from main import (
     _setup_logging,
     _should_process_record,
     process_one_order,
+    run_poll_loop,
 )
 
 logger = logging.getLogger(__name__)
@@ -206,6 +207,34 @@ def feishu_webhook():
         return jsonify({"code": 1, "msg": str(e)}), 500
 
     return jsonify({"code": 0})
+
+
+@app.route("/poll", methods=["GET", "POST"])
+def poll_route():
+    """
+    供 FC 定时触发器（或人工 curl）使用：跑一次全表扫描。
+
+    扫描逻辑见 main.run_poll_loop(once=True)：
+      - 拉取整张多维表
+      - 按订单号分组
+      - 任意行处于「待生成/空」状态的订单号 → 生成合同 + IM 推送 + 回写状态
+      - 已全部「已生成」的订单号自动跳过
+
+    无需事件订阅；只要 FC 定时器调一次此路径即可。
+    """
+    cfg = load_config_module()
+    if not (cfg.APP_ID and cfg.APP_SECRET):
+        return jsonify({"code": 1, "msg": "missing APP_ID/APP_SECRET"}), 500
+    if not (cfg.BITABLE_APP_TOKEN and cfg.BITABLE_TABLE_ID):
+        return jsonify({"code": 1, "msg": "missing BITABLE_APP_TOKEN/BITABLE_TABLE_ID"}), 500
+    try:
+        logger.info("[/poll] 开始一次轮询扫描")
+        run_poll_loop(cfg, once=True)
+        logger.info("[/poll] 轮询扫描完成")
+        return jsonify({"code": 0, "msg": "ok"})
+    except Exception as e:
+        logger.exception("[/poll] 轮询失败: %s", e)
+        return jsonify({"code": 1, "msg": str(e)}), 500
 
 
 def main():
