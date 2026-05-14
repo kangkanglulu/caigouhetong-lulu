@@ -6,7 +6,9 @@
 输出：template/contract_template.docx
 
 模板内置的 docxtpl 占位符：
-  - {{ 甲方 }}、{{ 乙方 }}、{{ 合同号码 }}、{{ 签约日期 }}
+  - 第 0 行整页居中：购 销 合 同
+  - 左侧：carote 标识 + {{ 甲方 }}、{{ 乙方 }}
+  - 右侧：{{ 合同号码 }}、{{ 签约日期 }}
   - 表格行循环：{%tr for item in items %} ... {%tr endfor %}
     每行变量：item.采购订单号 / 采购行号 / 物料编码 / 物料名称 / 交期 / 数量 / 金额
 """
@@ -174,7 +176,7 @@ def main():
     sec.page_width, sec.page_height = Mm(297), Mm(210)
     sec.left_margin = Mm(14)
     sec.right_margin = Mm(14)
-    sec.top_margin = Mm(12)
+    sec.top_margin = Mm(10)
     sec.bottom_margin = Mm(12)
 
     # 默认正文样式
@@ -186,73 +188,75 @@ def main():
     pf.space_before = Pt(0)
     pf.space_after = Pt(2)
 
-    # ===== 顶部：logo（左列纵向合并）| 第 1 行标题横跨中+右列；第 2/3 行 甲方+合同号、乙方+签约日（同一行对齐）=====
+    # ===== 顶部：第 0 行整页宽「购销合同」居中；其下左侧 logo 顶对齐 + 甲乙名称靠左，右侧合同号/日期 =====
     # 总宽度 269mm（297 - 14*2）
-    head = doc.add_table(rows=3, cols=3)
+    head = doc.add_table(rows=4, cols=2)
     head.autofit = False
-    _set_col_width(head, [80, 109, 80])
+    _set_col_width(head, [175, 94])
 
-    # 左列：logo 纵向合并三行，与标题 + 甲乙行整体对齐
-    c_logo_top = head.cell(0, 0)
-    c_logo_bot = head.cell(2, 0)
-    c_logo_top.merge(c_logo_bot)
-    # 标题横跨中列与右列，避免右上空白造成「合同号飘在页角」的观感
-    head.cell(0, 1).merge(head.cell(0, 2))
     for row in head.rows:
         for c in row.cells:
             _clear_cell_borders(c)
 
-    logo_cell = head.cell(0, 0)
-    logo_cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-    p_logo = logo_cell.paragraphs[0]
-    p_logo.alignment = WD_ALIGN_PARAGRAPH.LEFT
-    logo = _logo_path()
-    if logo is not None:
-        p_logo.add_run().add_picture(str(logo), width=Mm(40))
-    else:
-        r = p_logo.add_run("carote")
-        _set_run(r, font="Arial Black", size_pt=30, bold=True, color=(35, 35, 35))
-
-    # 第 1 行（中+右已合并）：标题
-    head.cell(0, 1).vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-    p_title = head.cell(0, 1).paragraphs[0]
+    # 第 0 行：两列合并，标题相对整页居中
+    head.cell(0, 0).merge(head.cell(0, 1))
+    c_title = head.cell(0, 0)
+    c_title.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+    p_title = c_title.paragraphs[0]
     p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p_title.paragraph_format.space_before = Pt(0)
+    p_title.paragraph_format.space_after = Pt(4)
     r = p_title.add_run("购 销 合 同")
     _set_run(r, size_pt=28, bold=True, color=(0, 0, 0))
 
-    # 中列第 2 行：甲方（与右列「合同号码」同一行）
-    head.cell(1, 1).vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-    p_a = head.cell(1, 1).paragraphs[0]
-    p_a.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    # 第 1～3 行左列合并：logo 靠上 + 甲方乙方（整块在纸面左侧）
+    head.cell(1, 0).merge(head.cell(3, 0))
+    logo_cell = head.cell(1, 0)
+    logo_cell.vertical_alignment = WD_ALIGN_VERTICAL.TOP
+    p_logo = logo_cell.paragraphs[0]
+    p_logo.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    p_logo.paragraph_format.space_before = Pt(0)
+    p_logo.paragraph_format.space_after = Pt(0)
+    logo = _logo_path()
+    if logo is not None:
+        p_logo.add_run().add_picture(str(logo), width=Mm(36))
+    else:
+        r0 = p_logo.add_run("carote")
+        _set_run(r0, font="Arial Black", size_pt=26, bold=True, color=(35, 35, 35))
+
+    p_a = logo_cell.add_paragraph()
+    p_a.paragraph_format.space_before = Pt(3)
     p_a.paragraph_format.space_after = Pt(0)
+    p_a.alignment = WD_ALIGN_PARAGRAPH.LEFT
     ra1 = p_a.add_run("甲方：")
     _set_run(ra1, size_pt=10, color=(120, 120, 120))
     ra2 = p_a.add_run("{{ 甲方 }}")
     _set_run(ra2, size_pt=10, bold=True)
 
-    # 中列第 3 行：乙方（与右列「签约日期」同一行）
-    head.cell(2, 1).vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-    p_b = head.cell(2, 1).paragraphs[0]
+    p_b = logo_cell.add_paragraph()
+    p_b.paragraph_format.space_before = Pt(2)
+    p_b.paragraph_format.space_after = Pt(0)
     p_b.alignment = WD_ALIGN_PARAGRAPH.LEFT
     rb1 = p_b.add_run("乙方：")
     _set_run(rb1, size_pt=10, color=(120, 120, 120))
     rb2 = p_b.add_run("{{ 乙方 }}")
     _set_run(rb2, size_pt=10, bold=True)
 
-    # 右列第 2 行：合同号码（与「甲方」同一行、右对齐）
-    head.cell(1, 2).vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-    p_no = head.cell(1, 2).paragraphs[0]
+    # 第 1～3 行右列合并：合同号码、签约日期右对齐
+    head.cell(1, 1).merge(head.cell(3, 1))
+    right_cell = head.cell(1, 1)
+    right_cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+    p_no = right_cell.paragraphs[0]
     p_no.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    p_no.paragraph_format.space_after = Pt(0)
+    p_no.paragraph_format.space_after = Pt(4)
     rn1 = p_no.add_run("合同号码：")
     _set_run(rn1, size_pt=10, color=(120, 120, 120))
     rn2 = p_no.add_run("{{ 合同号码 }}")
     _set_run(rn2, size_pt=10, bold=True, color=(0, 0, 0))
 
-    # 右列第 3 行：签约日期（与「乙方」同一行、右对齐）
-    head.cell(2, 2).vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-    p_dt = head.cell(2, 2).paragraphs[0]
+    p_dt = right_cell.add_paragraph()
     p_dt.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    p_dt.paragraph_format.space_after = Pt(0)
     rd1 = p_dt.add_run("签约日期：")
     _set_run(rd1, size_pt=10, color=(120, 120, 120))
     rd2 = p_dt.add_run("{{ 签约日期 }}")
@@ -275,8 +279,8 @@ def main():
     # for/endfor 行在渲染时被 docxtpl 整行删除，仅保留按 items 循环出的数据行。
     headers = ["采购订单号", "采购行号", "物料编码", "物料名称", "交期", "数量", "金额"]
     field_keys = ["采购订单号", "采购行号", "物料编码", "物料名称", "交期", "数量", "金额"]
-    # 总宽 269mm
-    col_widths = [35, 18, 24, 80, 24, 18, 70]
+    # 总宽 269mm（交期略加宽便于一行显示日期；金额列略收窄）
+    col_widths = [35, 18, 24, 80, 36, 18, 58]
 
     table = doc.add_table(rows=4, cols=len(headers))
     table.autofit = False
