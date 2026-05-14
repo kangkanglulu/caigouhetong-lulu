@@ -16,7 +16,7 @@ from pathlib import Path
 
 from contract_generator import convert_docx_to_pdf, render_contract, safe_filename
 from feishu_client import FeishuClient, feishu_field_to_plain, load_config_module
-from field_mapping import record_to_contract_context, validate_context
+from field_mapping import _format_amount_two_decimals, record_to_contract_context, validate_context
 
 logger = logging.getLogger(__name__)
 
@@ -278,6 +278,7 @@ def process_one_order(
         fields = rec.get("fields") or {}
         sub_ctx = record_to_contract_context(fields, field_config=cfg)
         item = (sub_ctx.get("items") or [{}])[0]
+        item["金额"] = _format_amount_two_decimals(fields.get(cfg.FIELD_AMOUNT))
         items.append(item)
         total += _amount_to_float(item.get("金额"))
 

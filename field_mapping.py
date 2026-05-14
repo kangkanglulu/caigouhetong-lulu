@@ -21,27 +21,80 @@ from typing import Any
 from feishu_client import feishu_field_to_plain
 
 
-def _format_sign_date(raw: Any) -> str:
-    """将飞书日期字段转为「YYYY年MM月DD日」。"""
+def _parse_feishu_date_to_dt(raw: Any) -> datetime | None:
+    """从飞书日期/时间戳字段解析出 datetime（本地时区）。"""
     if raw is None or raw == "":
-        return ""
-    text = str(feishu_field_to_plain(raw))
-    # 飞书日期可能是时间戳毫秒
-    if text.isdigit():
-        ms = int(text)
-        if ms > 1_000_000_000_000:
-            ms //= 1000
+        return None
+    if isinstance(raw, dict):
+        if "date" in raw:
+            raw = raw.get("date")
+        elif "value" in raw:
+            return _parse_feishu_date_to_dt(raw.get("value"))
+        else:
+            return None
+    if isinstance(raw, list) and raw:
+        return _parse_feishu_date_to_dt(raw[0])
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+        n = int(raw)
+        if n > 1_000_000_000_000:
+            n //= 1000
         try:
-            dt = datetime.fromtimestamp(ms)
-            return f"{dt.year}年{dt.month:02d}月{dt.day:02d}日"
+            return datetime.fromtimestamp(n)
         except (ValueError, OSError):
-            pass
-    # 已是中文或 ISO 日期则尽力规范化
+            return None
+
+    text = str(feishu_field_to_plain(raw)).strip()
+    if not text:
+        return None
+    # 毫秒或秒级时间戳
+    if text.isdigit():
+        n = int(text)
+        if n > 1_000_000_000_000:
+            n //= 1000
+        try:
+            return datetime.fromtimestamp(n)
+        except (ValueError, OSError):
+            return None
     m = re.match(r"^(\d{4})-(\d{2})-(\d{2})", text)
     if m:
-        y, mo, d = m.groups()
-        return f"{y}年{mo}月{d}日"
-    return text
+        y, mo, d = map(int, m.groups())
+        try:
+            return datetime(y, mo, d)
+        except ValueError:
+            return None
+    m2 = re.match(r"^(\d{4})/(\d{1,2})/(\d{1,2})", text)
+    if m2:
+        y, mo, d = map(int, m2.groups())
+        try:
+            return datetime(y, mo, d)
+        except ValueError:
+            return None
+    return None
+
+
+def _format_date_cn(raw: Any) -> str:
+    """飞书日期 / 时间戳 →「YYYY年MM月DD日」（签约日期、交期等）。"""
+    dt = _parse_feishu_date_to_dt(raw)
+    if dt is not None:
+        return f"{dt.year}年{dt.month:02d}月{dt.day:02d}日"
+    if raw is None or raw == "":
+        return ""
+    return str(feishu_field_to_plain(raw)).strip()
+
+
+def _format_amount_two_decimals(val: Any) -> str:
+    """金额：保留小数点后两位（与 Excel 展示习惯一致）。"""
+    if val is None or val == "":
+        return ""
+    if isinstance(val, (int, float)) and not isinstance(val, bool):
+        return f"{float(val):.2f}"
+    s = str(feishu_field_to_plain(val)).strip().replace(",", "").replace("，", "")
+    if not s:
+        return ""
+    try:
+        return f"{float(s):.2f}"
+    except ValueError:
+        return str(feishu_field_to_plain(val)).strip()
 
 
 def record_to_contract_context(
@@ -67,16 +120,17 @@ def record_to_contract_context(
     seller = g("FIELD_SUPPLIER")
     contract_no = g("FIELD_ORDER_NO")
     created = g("FIELD_ORDER_CREATED_AT")
-    sign_date = _format_sign_date(fields.get(fc.FIELD_ORDER_CREATED_AT))
+    sign_date = _format_date_cn(fields.get(fc.FIELD_ORDER_CREATED_AT))
 
     line_no = g("FIELD_LINE_NO")
     material_code = g("FIELD_MATERIAL_CODE")
     material_name = g("FIELD_MATERIAL_NAME")
-    delivery = g("FIELD_DELIVERY_DATE")
+    delivery = _format_date_cn(fields.get(fc.FIELD_DELIVERY_DATE))
     qty = g("FIELD_QTY")
-    amount = g("FIELD_AMOUNT")
+    amount_raw = g("FIELD_AMOUNT")
+    amount = _format_amount_two_decimals(amount_raw)
 
-    # PRD：合同金额 = 当前行金额
+    # PRD：合同金额 = 当前行金额（两位小数）
     total_amount = amount
 
     # 商品行（用于模板中的 {%tr for item in items %} 行循环）

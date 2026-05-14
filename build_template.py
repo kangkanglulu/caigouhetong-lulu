@@ -186,17 +186,25 @@ def main():
     pf.space_before = Pt(0)
     pf.space_after = Pt(2)
 
-    # ===== 顶部三栏：logo | 标题 | 合同号 / 签约日期 =====
+    # ===== 顶部：logo（左列纵向合并）| 第 1 行标题横跨中+右列；第 2/3 行 甲方+合同号、乙方+签约日（同一行对齐）=====
     # 总宽度 269mm（297 - 14*2）
-    head = doc.add_table(rows=1, cols=3)
+    head = doc.add_table(rows=3, cols=3)
     head.autofit = False
     _set_col_width(head, [80, 109, 80])
-    for c in head.rows[0].cells:
-        _clear_cell_borders(c)
-        c.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
 
-    # logo
-    p_logo = head.cell(0, 0).paragraphs[0]
+    # 左列：logo 纵向合并三行，与标题 + 甲乙行整体对齐
+    c_logo_top = head.cell(0, 0)
+    c_logo_bot = head.cell(2, 0)
+    c_logo_top.merge(c_logo_bot)
+    # 标题横跨中列与右列，避免右上空白造成「合同号飘在页角」的观感
+    head.cell(0, 1).merge(head.cell(0, 2))
+    for row in head.rows:
+        for c in row.cells:
+            _clear_cell_borders(c)
+
+    logo_cell = head.cell(0, 0)
+    logo_cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+    p_logo = logo_cell.paragraphs[0]
     p_logo.alignment = WD_ALIGN_PARAGRAPH.LEFT
     logo = _logo_path()
     if logo is not None:
@@ -205,42 +213,50 @@ def main():
         r = p_logo.add_run("carote")
         _set_run(r, font="Arial Black", size_pt=30, bold=True, color=(35, 35, 35))
 
-    # 标题
+    # 第 1 行（中+右已合并）：标题
+    head.cell(0, 1).vertical_alignment = WD_ALIGN_VERTICAL.CENTER
     p_title = head.cell(0, 1).paragraphs[0]
     p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     r = p_title.add_run("购 销 合 同")
     _set_run(r, size_pt=28, bold=True, color=(0, 0, 0))
 
-    # 合同号 / 签约日期
-    cell_meta = head.cell(0, 2)
-    p1 = cell_meta.paragraphs[0]
-    p1.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    p1.paragraph_format.space_after = Pt(2)
-    r1 = p1.add_run("合同号码：")
-    _set_run(r1, size_pt=9, color=(120, 120, 120))
-    r2 = p1.add_run("{{ 合同号码 }}")
-    _set_run(r2, size_pt=9, color=(0, 0, 0))
-    p2 = cell_meta.add_paragraph()
-    p2.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    p2.paragraph_format.space_after = Pt(0)
-    r3 = p2.add_run("签约日期：")
-    _set_run(r3, size_pt=9, color=(120, 120, 120))
-    r4 = p2.add_run("{{ 签约日期 }}")
-    _set_run(r4, size_pt=9, color=(0, 0, 0))
+    # 中列第 2 行：甲方（与右列「合同号码」同一行）
+    head.cell(1, 1).vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+    p_a = head.cell(1, 1).paragraphs[0]
+    p_a.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    p_a.paragraph_format.space_after = Pt(0)
+    ra1 = p_a.add_run("甲方：")
+    _set_run(ra1, size_pt=10, color=(120, 120, 120))
+    ra2 = p_a.add_run("{{ 甲方 }}")
+    _set_run(ra2, size_pt=10, bold=True)
 
-    # ===== 甲方 / 乙方 =====
-    p = doc.add_paragraph()
-    p.paragraph_format.space_before = Pt(4)
-    r1 = p.add_run("甲方：")
-    _set_run(r1, size_pt=10, color=(120, 120, 120))
-    r2 = p.add_run("{{ 甲方 }}")
-    _set_run(r2, size_pt=10, bold=True)
+    # 中列第 3 行：乙方（与右列「签约日期」同一行）
+    head.cell(2, 1).vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+    p_b = head.cell(2, 1).paragraphs[0]
+    p_b.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    rb1 = p_b.add_run("乙方：")
+    _set_run(rb1, size_pt=10, color=(120, 120, 120))
+    rb2 = p_b.add_run("{{ 乙方 }}")
+    _set_run(rb2, size_pt=10, bold=True)
 
-    p = doc.add_paragraph()
-    r1 = p.add_run("乙方：")
-    _set_run(r1, size_pt=10, color=(120, 120, 120))
-    r2 = p.add_run("{{ 乙方 }}")
-    _set_run(r2, size_pt=10, bold=True)
+    # 右列第 2 行：合同号码（与「甲方」同一行、右对齐）
+    head.cell(1, 2).vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+    p_no = head.cell(1, 2).paragraphs[0]
+    p_no.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    p_no.paragraph_format.space_after = Pt(0)
+    rn1 = p_no.add_run("合同号码：")
+    _set_run(rn1, size_pt=10, color=(120, 120, 120))
+    rn2 = p_no.add_run("{{ 合同号码 }}")
+    _set_run(rn2, size_pt=10, bold=True, color=(0, 0, 0))
+
+    # 右列第 3 行：签约日期（与「乙方」同一行、右对齐）
+    head.cell(2, 2).vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+    p_dt = head.cell(2, 2).paragraphs[0]
+    p_dt.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    rd1 = p_dt.add_run("签约日期：")
+    _set_run(rd1, size_pt=10, color=(120, 120, 120))
+    rd2 = p_dt.add_run("{{ 签约日期 }}")
+    _set_run(rd2, size_pt=10, bold=True, color=(0, 0, 0))
 
     # ===== 引言 =====
     p = doc.add_paragraph()
